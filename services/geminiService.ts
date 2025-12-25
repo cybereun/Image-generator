@@ -1,25 +1,30 @@
+
 import { GoogleGenAI, Modality, GenerateContentResponse, Content, Part } from "@google/genai";
-import { AspectRatio } from "../types";
+import { AspectRatio, ImageSize } from "../types";
 
-const API_KEY = process.env.API_KEY;
+// Always create a new instance before making an API call to ensure up-to-date API key usage
+const getAIClient = () => {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+        throw new Error("API 키가 설정되지 않았습니다. API 키를 먼저 선택해주세요.");
+    }
+    return new GoogleGenAI({ apiKey });
+};
 
-if (!API_KEY) {
-    throw new Error("API_KEY environment variable not set");
-}
-
-const ai = new GoogleGenAI({ apiKey: API_KEY });
-const model = 'gemini-2.5-flash-image-preview';
+const MODEL_NAME = 'gemini-3-pro-image-preview';
 
 export const generateImage = async (
     prompt: string,
     image?: { mimeType: string; data: string },
-    aspectRatio?: AspectRatio
+    aspectRatio?: AspectRatio,
+    imageSize?: ImageSize
 ): Promise<string> => {
     
     if (!prompt) {
         throw new Error("프롬프트는 비워둘 수 없습니다.");
     }
 
+    const ai = getAIClient();
     const textPart: Part = { text: prompt };
     const parts: Part[] = [textPart];
 
@@ -30,7 +35,6 @@ export const generateImage = async (
                 data: image.data,
             },
         };
-        // For editing, it's often best to put the prompt second
         parts.unshift(imagePart);
     }
     
@@ -38,19 +42,21 @@ export const generateImage = async (
 
     try {
         const response: GenerateContentResponse = await ai.models.generateContent({
-            model,
+            model: MODEL_NAME,
             contents,
             config: {
-                // Must include both modalities when generating/editing images with this model
                 responseModalities: [Modality.IMAGE, Modality.TEXT],
-                // Only apply aspect ratio if provided (usually for generation mode)
-                imageConfig: aspectRatio ? { aspectRatio } : undefined,
+                imageConfig: (aspectRatio || imageSize) ? { 
+                    aspectRatio,
+                    imageSize 
+                } : undefined,
+                tools: [{ googleSearch: {} }] // Gemini 3 Pro supports Search Grounding for real-time info
             },
         });
         
-        // Find the image part in the response
-        for (const candidate of response.candidates) {
-            for (const part of candidate.content.parts) {
+        // Handle potential error from the model response
+        if (response.candidates && response.candidates.length > 0) {
+            for (const part of response.candidates[0].content.parts) {
                 if (part.inlineData) {
                     const base64ImageBytes: string = part.inlineData.data;
                     return `data:${part.inlineData.mimeType};base64,${base64ImageBytes}`;
@@ -58,20 +64,24 @@ export const generateImage = async (
             }
         }
 
-        // If no image part is found, check for a text response which might be an error or refusal
         const textResponse = response.text?.trim();
         if (textResponse) {
-             throw new Error(`모델이 이미지를 생성하지 않았습니다. 응답: ${textResponse}`);
+             throw new Error(`모델이 이미지를 생성하지 않았습니다: ${textResponse}`);
         }
 
-        throw new Error("모델 응답에서 생성된 이미지를 찾을 수 없습니다.");
+        throw new Error("생성된 이미지를 찾을 수 없습니다.");
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Gemini API Error:", error);
-        // Provide a more user-friendly error message
-        if (error instanceof Error && error.message.includes('429')) {
+        
+        // Handle specific re-authentication error
+        if (error.message?.includes("Requested entity was not found")) {
+            throw new Error("REAUTH_NEEDED");
+        }
+        
+        if (error.message?.includes('429')) {
              throw new Error("요청이 너무 많습니다. 잠시 후 다시 시도해주세요.");
         }
-        throw new Error(`API 요청에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`API 요청 실패: ${error instanceof Error ? error.message : String(error)}`);
     }
 };

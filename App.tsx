@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+
+import React, { useState, useCallback, useEffect } from 'react';
 import { Header } from './components/Header';
 import { ModeSelector } from './components/ModeSelector';
 import { PromptInput } from './components/PromptInput';
@@ -8,10 +9,14 @@ import { PromptGuideModal } from './components/PromptGuideModal';
 import { EditTechniqueSelector } from './components/EditTechniqueSelector';
 import { EditPromptBuilder } from './components/EditPromptBuilder';
 import { AspectRatioSelector } from './components/AspectRatioSelector';
-import { AppMode, EditTechnique, AspectRatio } from './types';
+import { ImageSizeSelector } from './components/ImageSizeSelector';
+import { AppMode, EditTechnique, AspectRatio, ImageSize } from './types';
 import { generateImage } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
 import { EDIT_TECHNIQUES } from './constants';
+
+// Removed manual declare global for aistudio to resolve type conflict errors.
+// The environment already provides aistudio on the window object as a pre-configured property.
 
 const App: React.FC = () => {
     const [mode, setMode] = useState<AppMode>(AppMode.Generate);
@@ -24,6 +29,25 @@ const App: React.FC = () => {
     const [isGuideOpen, setIsGuideOpen] = useState<boolean>(false);
     const [editTechnique, setEditTechnique] = useState<EditTechnique>(EDIT_TECHNIQUES[0].key);
     const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
+    const [imageSize, setImageSize] = useState<ImageSize>('1K');
+    
+    // API Key State
+    const [hasKey, setHasKey] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        const checkKey = async () => {
+            // Fix: Access window.aistudio using casting to 'any' to avoid conflicting type declarations or modifier mismatches.
+            const selected = await (window as any).aistudio.hasSelectedApiKey();
+            setHasKey(selected);
+        };
+        checkKey();
+    }, []);
+
+    const handleSelectKey = async () => {
+        // Fix: Access window.aistudio using casting to 'any' for consistency and to bypass local type conflicts.
+        await (window as any).aistudio.openSelectKey();
+        setHasKey(true); // Proceed assuming selection or platform handle as per guidelines.
+    };
 
     const handleFileChange = (file: File | null) => {
         setImageFile(file);
@@ -42,21 +66,12 @@ const App: React.FC = () => {
         setMode(newMode);
         setGeneratedImageUrl(null);
         setError(null);
-
         if (newMode === AppMode.Generate) {
             setPrompt('');
             handleFileChange(null);
         } else {
             setEditTechnique(EDIT_TECHNIQUES[0].key);
         }
-    };
-
-    const handleTechniqueChange = (newTechnique: EditTechnique) => {
-        setEditTechnique(newTechnique);
-    };
-
-    const handleAspectRatioChange = (newRatio: AspectRatio) => {
-        setAspectRatio(newRatio);
     };
 
     const handleSubmit = useCallback(async () => {
@@ -68,30 +83,62 @@ const App: React.FC = () => {
             let imagePayload: { mimeType: string, data: string } | undefined = undefined;
 
             if (mode === AppMode.Edit) {
-                if (!imageFile) {
-                    throw new Error('이미지 편집 모드에서는 이미지를 업로드해야 합니다.');
-                }
+                if (!imageFile) throw new Error('편집 모드에서는 이미지를 업로드해야 합니다.');
                 const base64Data = await fileToBase64(imageFile);
                 imagePayload = { mimeType: imageFile.type, data: base64Data };
             }
 
-            // Only pass aspect ratio in Generate mode to avoid conflicts with input image dimensions in Edit mode
-            const ratioToUse = mode === AppMode.Generate ? aspectRatio : undefined;
-
-            const resultUrl = await generateImage(prompt, imagePayload, ratioToUse);
+            const resultUrl = await generateImage(
+                prompt, 
+                imagePayload, 
+                mode === AppMode.Generate ? aspectRatio : undefined,
+                mode === AppMode.Generate ? imageSize : undefined
+            );
             setGeneratedImageUrl(resultUrl);
 
-        } catch (err) {
-            console.error(err);
-            setError(err instanceof Error ? err.message : '이미지 생성 중 알 수 없는 오류가 발생했습니다.');
+        } catch (err: any) {
+            if (err.message === "REAUTH_NEEDED") {
+                setHasKey(false);
+                setError("API 키 인증에 실패했습니다. 키를 다시 선택해주세요.");
+            } else {
+                setError(err instanceof Error ? err.message : '이미지 생성 중 오류가 발생했습니다.');
+            }
         } finally {
             setIsLoading(false);
         }
-    }, [prompt, mode, imageFile, aspectRatio]);
-    
-    const handlePromptChange = useCallback((newPrompt: string) => {
-        setPrompt(newPrompt);
-    }, []);
+    }, [prompt, mode, imageFile, aspectRatio, imageSize]);
+
+    if (hasKey === false) {
+        return (
+            <div className="min-h-screen bg-gray-900 text-gray-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-gray-800 p-8 rounded-2xl shadow-2xl border border-indigo-500/30 text-center">
+                    <div className="w-20 h-20 bg-indigo-600/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <svg className="w-10 h-10 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                    </div>
+                    <h2 className="text-2xl font-bold mb-2">API 키 설정 필요</h2>
+                    <p className="text-gray-400 mb-6">
+                        고품질 이미지 생성을 위해 유료 GCP 프로젝트의 API 키 선택이 필요합니다. 선택된 키는 로컬 환경에서 안전하게 관리됩니다.
+                    </p>
+                    <button 
+                        onClick={handleSelectKey}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl transition-all shadow-lg mb-4"
+                    >
+                        API 키 선택하기
+                    </button>
+                    <a 
+                        href="https://ai.google.dev/gemini-api/docs/billing" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-sm text-indigo-400 hover:text-indigo-300 underline"
+                    >
+                        결제 및 프로젝트 가이드 확인
+                    </a>
+                </div>
+            </div>
+        );
+    }
 
     const selectedTechnique = EDIT_TECHNIQUES.find(t => t.key === editTechnique) ?? EDIT_TECHNIQUES[0];
 
@@ -103,51 +150,37 @@ const App: React.FC = () => {
                     <ModeSelector currentMode={mode} onModeChange={handleModeChange} />
                     
                     {mode === AppMode.Generate && (
-                        <AspectRatioSelector 
-                            currentRatio={aspectRatio} 
-                            onRatioChange={handleAspectRatioChange} 
-                        />
+                        <div className="space-y-4">
+                            <AspectRatioSelector 
+                                currentRatio={aspectRatio} 
+                                onRatioChange={setAspectRatio} 
+                            />
+                            <ImageSizeSelector 
+                                currentSize={imageSize} 
+                                onSizeChange={setImageSize} 
+                            />
+                        </div>
                     )}
 
                     {mode === AppMode.Edit && (
                         <>
-                            <ImageUploader 
-                                imagePreview={imagePreview} 
-                                onFileChange={handleFileChange} 
-                            />
-                            <EditTechniqueSelector
-                                currentTechnique={editTechnique}
-                                onTechniqueChange={handleTechniqueChange}
-                            />
-                            <EditPromptBuilder
-                                technique={selectedTechnique}
-                                onPromptChange={handlePromptChange}
-                            />
+                            <ImageUploader imagePreview={imagePreview} onFileChange={handleFileChange} />
+                            <EditTechniqueSelector currentTechnique={editTechnique} onTechniqueChange={setEditTechnique} />
+                            <EditPromptBuilder technique={selectedTechnique} onPromptChange={setPrompt} />
                         </>
                     )}
                     
-                    <PromptInput 
-                        prompt={prompt}
-                        setPrompt={setPrompt}
-                        onSubmit={handleSubmit}
-                        isLoading={isLoading}
-                        mode={mode}
-                    />
+                    <PromptInput prompt={prompt} setPrompt={setPrompt} onSubmit={handleSubmit} isLoading={isLoading} mode={mode} />
 
                     <button 
                         onClick={() => setIsGuideOpen(true)}
-                        className="mt-4 text-center w-full bg-gray-700 hover:bg-gray-600 text-indigo-300 font-semibold py-2 px-4 rounded-lg transition-colors duration-300"
+                        className="mt-4 text-center w-full bg-gray-700 hover:bg-gray-600 text-indigo-300 font-semibold py-2 px-4 rounded-lg transition-colors"
                     >
                         프롬프트 가이드 보기
                     </button>
                 </div>
                 <div className="lg:w-2/3 flex-grow flex items-center justify-center bg-gray-800 rounded-xl shadow-lg p-4">
-                    <ResultDisplay
-                        imageUrl={generatedImageUrl}
-                        isLoading={isLoading}
-                        error={error}
-                        mode={mode}
-                    />
+                    <ResultDisplay imageUrl={generatedImageUrl} isLoading={isLoading} error={error} mode={mode} />
                 </div>
             </main>
             <PromptGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} />

@@ -1,3 +1,4 @@
+
 export enum AppMode {
     Generate = 'generate',
     Edit = 'edit',
@@ -13,8 +14,8 @@ export enum EditTechnique {
 }
 
 export type AspectRatio = '1:1' | '16:9' | '9:16' | '4:3' | '3:4';
+export type ImageSize = '1K' | '2K' | '4K';
 
-// New types for the interactive prompt builder
 export type PromptPart = 
     | { type: 'text'; value: string }
     | { type: 'input'; id: string; placeholder: string; suggestions?: string[] }
