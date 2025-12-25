@@ -15,9 +15,6 @@ import { generateImage } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
 import { EDIT_TECHNIQUES } from './constants';
 
-// Removed manual declare global for aistudio to resolve type conflict errors.
-// The environment already provides aistudio on the window object as a pre-configured property.
-
 const App: React.FC = () => {
     const [mode, setMode] = useState<AppMode>(AppMode.Generate);
     const [prompt, setPrompt] = useState<string>('');
@@ -36,7 +33,6 @@ const App: React.FC = () => {
 
     useEffect(() => {
         const checkKey = async () => {
-            // Fix: Access window.aistudio using casting to 'any' to avoid conflicting type declarations or modifier mismatches.
             const selected = await (window as any).aistudio.hasSelectedApiKey();
             setHasKey(selected);
         };
@@ -44,9 +40,8 @@ const App: React.FC = () => {
     }, []);
 
     const handleSelectKey = async () => {
-        // Fix: Access window.aistudio using casting to 'any' for consistency and to bypass local type conflicts.
         await (window as any).aistudio.openSelectKey();
-        setHasKey(true); // Proceed assuming selection or platform handle as per guidelines.
+        setHasKey(true);
     };
 
     const handleFileChange = (file: File | null) => {
@@ -144,7 +139,7 @@ const App: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 flex flex-col">
-            <Header />
+            <Header onOpenSettings={handleSelectKey} />
             <main className="flex-grow container mx-auto p-4 md:p-8 flex flex-col lg:flex-row gap-8">
                 <div className="lg:w-1/3 flex flex-col gap-6">
                     <ModeSelector currentMode={mode} onModeChange={handleModeChange} />
